@@ -1,24 +1,3 @@
-# requirements
-# torch
-# torchvision
-# matplotlib
-# scipy
-# umap-learn
-
-# TODO: freeze all deps versions and save in git (conda list in output file or pip)
-# TODO: use another VQ impl
-
-batch_size = 256
-num_training_updates = 1000 # TODO: rename with epochs, and codebook rename too, and private vairables
-num_hiddens = 128
-num_residual_hiddens = 32
-num_residual_layers = 2
-embedding_dim = 64
-num_embeddings = 512
-commitment_cost = 0.25
-decay = 0.99
-learning_rate = 1e-3
-
 from __future__ import print_function
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,6 +15,17 @@ from torchvision.utils import make_grid
 import os
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+batch_size = 256
+num_training_updates = 1000 # TODO: rename with epochs, and codebook rename too, and private vairables
+num_hiddens = 128
+num_residual_hiddens = 32
+num_residual_layers = 2
+embedding_dim = 64
+num_embeddings = 512
+commitment_cost = 0.25
+decay = 0.99
+learning_rate = 1e-3
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 training_data = datasets.CIFAR10(root="data", train=True, download=True,
@@ -171,7 +161,6 @@ class Model(nn.Module):
         x_recon = self._decoder(quantized)
 
         return loss, x_recon, perplexity
-
 
 
 def main():
