@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 import os
 import scipy
 from datasets import DatasetEMNIST
+from tensorboardX import SummaryWriter
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
@@ -22,6 +23,10 @@ embedding_dim = 64
 num_embeddings = 512
 commitment_cost = 0.25
 learning_rate = 1e-3
+
+writer = SummaryWriter(
+    logdir='tmp'
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # training_data = datasets.CIFAR10(root="data", train=True, download=True,
@@ -164,9 +169,9 @@ def main():
     metrics = {}
     for stage in ['train', 'validation']:
         for metric in ['loss', 'loss_rec', 'loss_encoder', 'loss_codebook', 'perplexity']:
-            metrics[f'{stage}_{metric}'] = []
+            metrics[f'{stage}/{metric}'] = []
 
-    for epoch in range(epochs):
+    for epoch in range(1, epochs):
         for data_loader in [data_loader_train, data_loader_validation]:
             metrics_epoch = {key: [] for key in metrics.keys()}
             stage = 'train'
@@ -185,11 +190,11 @@ def main():
                 loss_rec = F.mse_loss(x_prim, x) / x_variance
                 loss = loss_rec + loss_encoder + loss_codebook
                 
-                metrics_epoch[f'{stage}_loss'].append(loss.cpu().item())
-                metrics_epoch[f'{stage}_loss_rec'].append(loss_rec.cpu().item())
-                metrics_epoch[f'{stage}_loss_encoder'].append(loss_encoder.cpu().item())
-                metrics_epoch[f'{stage}_loss_codebook'].append(loss_codebook.cpu().item())
-                metrics_epoch[f'{stage}_perplexity'].append(perplexity.cpu().item())
+                metrics_epoch[f'{stage}/loss'].append(loss.cpu().item())
+                metrics_epoch[f'{stage}/loss_rec'].append(loss_rec.cpu().item())
+                metrics_epoch[f'{stage}/loss_encoder'].append(loss_encoder.cpu().item())
+                metrics_epoch[f'{stage}/loss_codebook'].append(loss_codebook.cpu().item())
+                metrics_epoch[f'{stage}/perplexity'].append(perplexity.cpu().item())
 
                 if data_loader == data_loader_train:
                     loss.backward()
@@ -202,10 +207,15 @@ def main():
                     value = np.mean(metrics_epoch[key])
                     metrics[key].append(value)
                     metrics_strs.append(f'{key}: {round(value, 2)}')
+                    writer.add_scalar(key, value, epoch)
 
             print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
-    # TODO: print train and validation scalars (separate sections) / print x and x_prim image / print umap 
+    #     # Fixed images for Tensorboard
+    #     fixed_images, _ = next(iter(test_loader))
+    #     fixed_grid = make_grid(fixed_images, nrow=8, range=(-1, 1), normalize=True)
+    #     writer.add_image('original', fixed_grid, 0)
+    # # TODO: print x and x_prim image / print umap 
 
 if __name__ == "__main__":
     main()
