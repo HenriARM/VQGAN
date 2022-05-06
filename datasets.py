@@ -7,17 +7,21 @@ import pickle
 MAX_LEN = 256
 
 class DatasetEMNIST(torch.utils.data.Dataset):
-    def __init__(self):
+    def __init__(self, is_train):
         super().__init__() # 62 classes
         self.data = torchvision.datasets.EMNIST(
-            root='../data',
+            root='./data',
             split='byclass',
-            train=(MAX_LEN == 0),
+            train=is_train,
             download=True
         )
-        self.labels = self.data.classe
+        self.labels = self.data.classes
+
     def __len__(self):
+        if MAX_LEN:
+            return MAX_LEN
         return len(self.data)
+
     def __getitem__(self, idx):
         # list tuple np.array torch.FloatTensor
         pil_x, y_idx = self.data[idx]

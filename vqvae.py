@@ -5,10 +5,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
+# import torchvision.datasets as datasets
+# import torchvision.transforms as transforms
 import os
 import scipy
+from datasets import DatasetEMNIST
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
@@ -23,17 +24,19 @@ commitment_cost = 0.25
 learning_rate = 1e-3
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-training_data = datasets.CIFAR10(root="data", train=True, download=True,
-                                  transform=transforms.Compose([
-                                      transforms.ToTensor(),
-                                      transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
-                                  ]))
-validation_data = datasets.CIFAR10(root="data", train=False, download=True,
-                                  transform=transforms.Compose([
-                                      transforms.ToTensor(),
-                                      transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
-                                  ]))
-x_variance = np.var(training_data.data / 255.0)
+# training_data = datasets.CIFAR10(root="data", train=True, download=True,
+#                                   transform=transforms.Compose([
+#                                       transforms.ToTensor(),
+#                                       transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
+#                                   ]))
+# validation_data = datasets.CIFAR10(root="data", train=False, download=True,
+#                                   transform=transforms.Compose([
+#                                       transforms.ToTensor(),
+#                                       transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
+#                                   ]))
+training_data = DatasetEMNIST(is_train=True)
+validation_data = DatasetEMNIST(is_train=False)
+x_variance = 1 #np.var(training_data.data / 255.0)
 
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, commitment_cost):
@@ -152,7 +155,7 @@ class VQVAE(nn.Module):
 
 def main():
     data_loader_train = DataLoader(training_data, batch_size=batch_size, shuffle=True, pin_memory=True)
-    data_loader_validation = DataLoader(validation_data, batch_size=32, shuffle=True, pin_memory=True)
+    data_loader_validation = DataLoader(validation_data, batch_size=batch_size, shuffle=True, pin_memory=True)
 
     model = VQVAE(num_hiddens, num_residual_layers, num_residual_hiddens, num_embeddings, embedding_dim, commitment_cost)
     model.to(device)
@@ -174,6 +177,8 @@ def main():
                 model = model.eval()
                 torch.set_grad_enabled(False)
             for x, _ in data_loader:
+                # MNIST tmp
+                x = torch.squeeze(torch.stack([x,x,x], dim=1))
                 x = x.to(device)
 
                 loss_encoder, loss_codebook, x_prim, perplexity = model.forward(x)
@@ -200,45 +205,14 @@ def main():
 
             print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
-
-    # f = plt.figure(figsize=(16,8))
-    # ax = f.add_subplot(1,2,1)
-    # ax.plot(train_res_recon_error)
-    # ax.set_yscale('log')
-    # ax.set_title('NMSE.')
-    # ax.set_xlabel('iteration')
-
-    # ax = f.add_subplot(1,2,2)
-    # ax.plot(train_res_perplexity)
-    # ax.set_title('Average codebook usage (perplexity).')
-    # ax.set_xlabel('iteration')
-
-            plt.subplot(121)  # row col idx
-        plts = []
-        c = 0
-        for key, value in metrics.items():
-            value = scipy.ndimage.gaussian_filter1d(value, sigma=2)
-
-            plts += plt.plot(value, f'C{c}', label=key)
-            ax = plt.twinx()
-            c += 1
-        plt.legend(plts, [it.get_label() for it in plts])
-        for i, j in enumerate([4, 5, 6, 16, 17, 18]):
-            plt.subplot(4, 6, j)
-            plt.imshow(x[i][0].T, cmap=plt.get_cmap('Greys'))
-
-            plt.subplot(4, 6, j + 6)
-            plt.imshow(x.cpu().data.numpy()[i][0].T, cmap=plt.get_cmap('Greys'))
-
-        plt.tight_layout(pad=0.5)
-        plt.show()
-
-
+    # TODO: print train and validation scalars (separate sections) / print x and x_prim image / print umap 
 
 if __name__ == "__main__":
     main()
 
-
+# TODO: add in this script MAX_LEN
+# TODO: separate all plots
+# TODO: get all data for variance
 # TODO: add UMAP on each epoch
 """
 proj = umap.UMAP(n_neighbors=3,
@@ -246,5 +220,4 @@ proj = umap.UMAP(n_neighbors=3,
                  metric='cosine').fit_transform(model._vq_vae._embedding.weight.data.cpu())
 plt.scatter(proj[:,0], proj[:,1], alpha=0.3)                
 """
-
 # TODO: rename codebook and private vairables
