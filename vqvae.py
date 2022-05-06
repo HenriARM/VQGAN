@@ -1,30 +1,25 @@
-from __future__ import print_function
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import savgol_filter
-from six.moves import xrange
 import umap
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-import torch.optim as optim
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
-from torchvision.utils import make_grid
 import os
+import scipy
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-batch_size = 256
-num_training_updates = 1000 # TODO: rename with epochs, and codebook rename too, and private vairables
+batch_size = 32
+epochs = 100
 num_hiddens = 128
 num_residual_hiddens = 32
 num_residual_layers = 2
 embedding_dim = 64
 num_embeddings = 512
 commitment_cost = 0.25
-decay = 0.99
 learning_rate = 1e-3
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -38,7 +33,7 @@ validation_data = datasets.CIFAR10(root="data", train=False, download=True,
                                       transforms.ToTensor(),
                                       transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
                                   ]))
-data_variance = np.var(training_data.data / 255.0)
+x_variance = np.var(training_data.data / 255.0)
 
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, commitment_cost):
@@ -73,17 +68,15 @@ class VectorQuantizer(nn.Module):
         quantized = torch.matmul(encodings, self._embedding.weight).view(input_shape)
         
         # Loss
-        e_latent_loss = F.mse_loss(quantized.detach(), inputs)
-        q_latent_loss = F.mse_loss(quantized, inputs.detach())
-        loss = q_latent_loss + self._commitment_cost * e_latent_loss
+        loss_encoder = F.mse_loss(quantized.detach(), inputs) * self._commitment_cost
+        loss_codebook = F.mse_loss(quantized, inputs.detach())
         
         quantized = inputs + (quantized - inputs).detach()
         avg_probs = torch.mean(encodings, dim=0)
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
         
         # convert quantized from BHWC -> BCHW
-        return loss, quantized.permute(0, 3, 1, 2).contiguous(), perplexity, encodings
-
+        return loss_encoder, loss_codebook, quantized.permute(0, 3, 1, 2).contiguous(), perplexity
 
 class Residual(nn.Module):
     def __init__(self, in_channels, num_hiddens, num_residual_hiddens):
@@ -97,7 +90,6 @@ class Residual(nn.Module):
     
     def forward(self, x):
         return x + self._block(x)
-
 
 class ResidualStack(nn.Module):
     def __init__(self, in_channels, num_hiddens, num_residual_layers, num_residual_hiddens):
@@ -142,75 +134,117 @@ class Decoder(nn.Module):
         x = F.relu(x)   
         return self._conv_trans_2(x)
              
-class Model(nn.Module):
-    def __init__(self, num_hiddens, num_residual_layers, num_residual_hiddens, 
-                 num_embeddings, embedding_dim, commitment_cost, decay=0):
-        super(Model, self).__init__()
+class VQVAE(nn.Module):
+    def __init__(self, num_hiddens, num_residual_layers, num_residual_hiddens, num_embeddings, embedding_dim, commitment_cost):
+        super(VQVAE, self).__init__()
         self._encoder = Encoder(3, num_hiddens, num_residual_layers, num_residual_hiddens)
         self._pre_vq_conv = nn.Conv2d(in_channels=num_hiddens, out_channels=embedding_dim, kernel_size=1, stride=1)
-        if decay > 0.0:
-            self._vq_vae = VectorQuantizer(num_embeddings, embedding_dim, commitment_cost)
-        else:
-            self._vq_vae = VectorQuantizer(num_embeddings, embedding_dim, commitment_cost)
+        self._vq_vae = VectorQuantizer(num_embeddings, embedding_dim, commitment_cost)
         self._decoder = Decoder(embedding_dim, num_hiddens, num_residual_layers, num_residual_hiddens)
 
     def forward(self, x):
         z = self._encoder(x)
         z = self._pre_vq_conv(z)
-        loss, quantized, perplexity, _ = self._vq_vae(z)
+        loss_encoder, loss_codebook, quantized, perplexity = self._vq_vae(z)
         x_recon = self._decoder(quantized)
-
-        return loss, x_recon, perplexity
+        return loss_encoder, loss_codebook, x_recon, perplexity
 
 
 def main():
-    training_loader = DataLoader(training_data, batch_size=batch_size, shuffle=True, pin_memory=True)
-    validation_loader = DataLoader(validation_data, batch_size=32, shuffle=True, pin_memory=True)
+    data_loader_train = DataLoader(training_data, batch_size=batch_size, shuffle=True, pin_memory=True)
+    data_loader_validation = DataLoader(validation_data, batch_size=32, shuffle=True, pin_memory=True)
 
-    model = Model(num_hiddens, num_residual_layers, num_residual_hiddens, num_embeddings, embedding_dim, commitment_cost, decay).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=False)
+    model = VQVAE(num_hiddens, num_residual_layers, num_residual_hiddens, num_embeddings, embedding_dim, commitment_cost)
+    model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, amsgrad=False)
 
-    model.train()
-    train_res_recon_error = []
-    train_res_perplexity = []
+    metrics = {}
+    for stage in ['train', 'validation']:
+        for metric in ['loss', 'loss_rec', 'loss_encoder', 'loss_codebook', 'perplexity']:
+            metrics[f'{stage}_{metric}'] = []
 
-    for i in xrange(num_training_updates): # TODO: rewrite in epoch way, not training steps with batches (50K Cifar, 15K * batch_size)
-        (data, _) = next(iter(training_loader))
-        data = data.to(device)
-        optimizer.zero_grad()
+    for epoch in range(epochs):
+        for data_loader in [data_loader_train, data_loader_validation]:
+            metrics_epoch = {key: [] for key in metrics.keys()}
+            stage = 'train'
+            model = model.train()
+            torch.set_grad_enabled(True)
+            if data_loader == data_loader_validation:
+                stage = 'validation'
+                model = model.eval()
+                torch.set_grad_enabled(False)
+            for x, _ in data_loader:
+                x = x.to(device)
 
-        vq_loss, data_recon, perplexity = model(data)
-        recon_error = F.mse_loss(data_recon, data) / data_variance
-        loss = recon_error + vq_loss
-        loss.backward()
+                loss_encoder, loss_codebook, x_prim, perplexity = model.forward(x)
+                loss_rec = F.mse_loss(x_prim, x) / x_variance
+                loss = loss_rec + loss_encoder + loss_codebook
+                
+                metrics_epoch[f'{stage}_loss'].append(loss.cpu().item())
+                metrics_epoch[f'{stage}_loss_rec'].append(loss_rec.cpu().item())
+                metrics_epoch[f'{stage}_loss_encoder'].append(loss_encoder.cpu().item())
+                metrics_epoch[f'{stage}_loss_codebook'].append(loss_codebook.cpu().item())
+                metrics_epoch[f'{stage}_perplexity'].append(perplexity.cpu().item())
 
-        optimizer.step()
-    
-        train_res_recon_error.append(recon_error.item())
-        train_res_perplexity.append(perplexity.item())
+                if data_loader == data_loader_train:
+                    loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-        if (i+1) % 100 == 0: # TODO: add other losses separately, and in sum + draw in Tensorboard
-            print('%d iterations' % (i+1))
-            print('recon_error: %.3f' % np.mean(train_res_recon_error[-100:]))
-            print('perplexity: %.3f' % np.mean(train_res_perplexity[-100:]))
-            print()
+            metrics_strs = []
+            for key in metrics_epoch.keys():
+                if stage in key:
+                    value = np.mean(metrics_epoch[key])
+                    metrics[key].append(value)
+                    metrics_strs.append(f'{key}: {round(value, 2)}')
+
+            print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
 
-    f = plt.figure(figsize=(16,8))
-    ax = f.add_subplot(1,2,1)
-    ax.plot(train_res_recon_error)
-    ax.set_yscale('log')
-    ax.set_title('NMSE.')
-    ax.set_xlabel('iteration')
+    # f = plt.figure(figsize=(16,8))
+    # ax = f.add_subplot(1,2,1)
+    # ax.plot(train_res_recon_error)
+    # ax.set_yscale('log')
+    # ax.set_title('NMSE.')
+    # ax.set_xlabel('iteration')
 
-    ax = f.add_subplot(1,2,2)
-    ax.plot(train_res_perplexity)
-    ax.set_title('Average codebook usage (perplexity).')
-    ax.set_xlabel('iteration')
+    # ax = f.add_subplot(1,2,2)
+    # ax.plot(train_res_perplexity)
+    # ax.set_title('Average codebook usage (perplexity).')
+    # ax.set_xlabel('iteration')
+
+            plt.subplot(121)  # row col idx
+        plts = []
+        c = 0
+        for key, value in metrics.items():
+            value = scipy.ndimage.gaussian_filter1d(value, sigma=2)
+
+            plts += plt.plot(value, f'C{c}', label=key)
+            ax = plt.twinx()
+            c += 1
+        plt.legend(plts, [it.get_label() for it in plts])
+        for i, j in enumerate([4, 5, 6, 16, 17, 18]):
+            plt.subplot(4, 6, j)
+            plt.imshow(x[i][0].T, cmap=plt.get_cmap('Greys'))
+
+            plt.subplot(4, 6, j + 6)
+            plt.imshow(x.cpu().data.numpy()[i][0].T, cmap=plt.get_cmap('Greys'))
+
+        plt.tight_layout(pad=0.5)
+        plt.show()
+
 
 
 if __name__ == "__main__":
     main()
 
 
-# TODO: check two other VQVAE implementations and how they did all same things
+# TODO: add UMAP on each epoch
+"""
+proj = umap.UMAP(n_neighbors=3,
+                 min_dist=0.1,
+                 metric='cosine').fit_transform(model._vq_vae._embedding.weight.data.cpu())
+plt.scatter(proj[:,0], proj[:,1], alpha=0.3)                
+"""
+
+# TODO: rename codebook and private vairables
