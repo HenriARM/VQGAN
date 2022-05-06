@@ -162,6 +162,12 @@ def main():
     data_loader_train = DataLoader(training_data, batch_size=batch_size, shuffle=True, pin_memory=True)
     data_loader_validation = DataLoader(validation_data, batch_size=batch_size, shuffle=True, pin_memory=True)
 
+    tb_x_norm, _ = next(iter(data_loader_validation))
+    # MNIST tmp
+    tb_x_norm = torch.squeeze(torch.stack([tb_x_norm, tb_x_norm, tb_x_norm], dim=1))
+    tb_x = ((tb_x_norm.cpu().numpy() + 0.5) * 255.0).astype(np.uint8)
+
+
     model = VQVAE(num_hiddens, num_residual_layers, num_residual_hiddens, num_embeddings, embedding_dim, commitment_cost)
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, amsgrad=False)
@@ -211,23 +217,23 @@ def main():
 
             print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
-    #     # Fixed images for Tensorboard
-    #     fixed_images, _ = next(iter(test_loader))
-    #     fixed_grid = make_grid(fixed_images, nrow=8, range=(-1, 1), normalize=True)
-    #     writer.add_image('original', fixed_grid, 0)
-    # # TODO: print x and x_prim image / print umap 
+        _, _, tb_x_prim_norm, _ = model.forward(tb_x_norm)
+        tb_x_prim = (tb_x_prim_norm.cpu().numpy() * 255.0).astype(np.uint8)
+        tb_x_prim = np.clip(tb_x_prim, 0, 255)
+        for i in range(len(tb_x)):
+            tb_x_merge = np.concatenate((tb_x[i][:1], tb_x_prim[i][:1]), axis=2)
+            writer.add_image(f'idx_{i}', tb_x_merge, epoch)
 
 if __name__ == "__main__":
     main()
 
 # TODO: add in this script MAX_LEN
-# TODO: separate all plots
 # TODO: get all data for variance
 # TODO: add UMAP on each epoch
+# TODO: rename codebook and private vairables
 """
 proj = umap.UMAP(n_neighbors=3,
                  min_dist=0.1,
                  metric='cosine').fit_transform(model._vq_vae._embedding.weight.data.cpu())
 plt.scatter(proj[:,0], proj[:,1], alpha=0.3)                
 """
-# TODO: rename codebook and private vairables
