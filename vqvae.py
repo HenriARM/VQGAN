@@ -41,7 +41,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #                                   ]))
 training_data = DatasetEMNIST(is_train=True)
 validation_data = DatasetEMNIST(is_train=False)
-x_variance = 1 #np.var(training_data.data / 255.0)
+
+all_training_data = [] 
+for i in range(len(training_data)):
+    all_training_data.append(training_data[i][0])
+result_arr = np.stack(all_training_data, axis=0)
+x_variance = np.var(all_training_data)
 
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, commitment_cost):
@@ -228,7 +233,6 @@ if __name__ == "__main__":
     main()
 
 # TODO: add in this script MAX_LEN
-# TODO: get all data for variance
 # TODO: add UMAP on each epoch
 # TODO: rename codebook and private vairables
 """
@@ -237,3 +241,6 @@ proj = umap.UMAP(n_neighbors=3,
                  metric='cosine').fit_transform(model._vq_vae._embedding.weight.data.cpu())
 plt.scatter(proj[:,0], proj[:,1], alpha=0.3)                
 """
+
+# TODO: try different image normalizations on input
+# TODO: make code run with local GPU
