@@ -12,7 +12,10 @@ import scipy
 from datasets import DatasetEMNIST
 from tensorboardX import SummaryWriter
 
-MAX_LEN = 256
+plt.ioff()
+
+VAL_LEN = 1000
+LOGDIR = 'tmp'
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
@@ -27,7 +30,7 @@ commitment_cost = 0.25
 learning_rate = 1e-3
 
 writer = SummaryWriter(
-    logdir='tmp'
+    logdir=LOGDIR
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -42,7 +45,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #                                       transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
 #                                   ]))
 training_data = DatasetEMNIST(is_train=True, len=100000)
-validation_data = DatasetEMNIST(is_train=False, len=MAX_LEN)
+validation_data = DatasetEMNIST(is_train=False, len=VAL_LEN)
 
 # TODO: why for variance calculation only one CPU used? try numba here
 all_training_data = [] 
@@ -225,6 +228,7 @@ def main():
 
             print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
+        # print images
         _, _, tb_x_prim_norm, _ = model.forward(tb_x_norm)
         tb_x_prim = (tb_x_prim_norm.cpu().numpy() * 255.0).astype(np.uint8)
         tb_x_prim = np.clip(tb_x_prim, 0, 255)
@@ -232,17 +236,17 @@ def main():
             tb_x_merge = np.concatenate((tb_x[i][:1], tb_x_prim[i][:1]), axis=2)
             writer.add_image(f'idx_{i}', tb_x_merge, epoch)
 
+        # TODO: add into TensorBoard
+        # print codebook UMAP
+        proj = umap.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(model._vq_vae._embedding.weight.data.cpu())
+        plt.scatter(proj[:,0], proj[:,1], alpha=0.3)
+        plt.savefig(os.path.join(LOGDIR, f'codebook_epoch_{epoch}.png'))
+        plt.close()
+
+
 if __name__ == "__main__":
     main()
 
-# TODO: add UMAP on each epoch
 # TODO: rename codebook and private vairables
-"""
-proj = umap.UMAP(n_neighbors=3,
-                 min_dist=0.1,
-                 metric='cosine').fit_transform(model._vq_vae._embedding.weight.data.cpu())
-plt.scatter(proj[:,0], proj[:,1], alpha=0.3)                
-"""
-
 # TODO: try different image normalizations on input
 # TODO: make code run with local GPU
