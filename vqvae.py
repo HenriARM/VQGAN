@@ -12,6 +12,8 @@ import scipy
 from datasets import DatasetEMNIST
 from tensorboardX import SummaryWriter
 
+MAX_LEN = 256
+
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 batch_size = 32
@@ -39,9 +41,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #                                       transforms.ToTensor(),
 #                                       transforms.Normalize((0.5,0.5,0.5), (1.0,1.0,1.0))
 #                                   ]))
-training_data = DatasetEMNIST(is_train=True)
-validation_data = DatasetEMNIST(is_train=False)
+training_data = DatasetEMNIST(is_train=True, len=100000)
+validation_data = DatasetEMNIST(is_train=False, len=MAX_LEN)
 
+# TODO: why for variance calculation only one CPU used? try numba here
 all_training_data = [] 
 for i in range(len(training_data)):
     all_training_data.append(training_data[i][0])
@@ -232,7 +235,6 @@ def main():
 if __name__ == "__main__":
     main()
 
-# TODO: add in this script MAX_LEN
 # TODO: add UMAP on each epoch
 # TODO: rename codebook and private vairables
 """

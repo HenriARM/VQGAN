@@ -4,10 +4,8 @@ import numpy as np
 import os
 import pickle
 
-MAX_LEN = 256
-
 class DatasetEMNIST(torch.utils.data.Dataset):
-    def __init__(self, is_train):
+    def __init__(self, is_train, len):
         super().__init__() # 62 classes
         self.data = torchvision.datasets.EMNIST(
             root='./data',
@@ -16,10 +14,11 @@ class DatasetEMNIST(torch.utils.data.Dataset):
             download=True
         )
         self.labels = self.data.classes
+        self.len = len
 
     def __len__(self):
-        if MAX_LEN:
-            return MAX_LEN
+        if self.len:
+            return self.len
         return len(self.data)
 
     def __getitem__(self, idx):
